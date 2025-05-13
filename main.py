@@ -5,20 +5,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from dotenv import load_dotenv
 
+# Cargar variables de entorno
 load_dotenv()
 
-# Cliente OpenAI (nuevo SDK)
+# Inicializar cliente OpenAI
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Carga de CSVs
+# Cargar CSVs desde la carpeta /csvs
 csv_folder = os.path.join(os.path.dirname(__file__), "csvs")
 csv_files = [os.path.join(csv_folder, f) for f in os.listdir(csv_folder) if f.endswith(".csv")]
 df = pd.concat([pd.read_csv(file) for file in csv_files], ignore_index=True)
 
-# FastAPI
+# Inicializar FastAPI
 app = FastAPI()
 
-# CORS
+# Configurar CORS para permitir peticiones desde cualquier origen (ajustable)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -44,8 +45,10 @@ NO inventes datos. Solo indicá cómo filtrar.
 async def chat(request: Request):
     body = await request.json()
     user_message = body.get("message")
+    print(f"📩 Mensaje recibido: {user_message}")
 
     try:
+        # Solicitar al modelo que genere el filtro
         completion = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
@@ -54,15 +57,26 @@ async def chat(request: Request):
             ],
             temperature=0,
         )
+
         response_text = completion.choices[0].message.content.strip()
-        print("🧠 Respuesta del modelo:", response_text)
+        print(f"🧠 Respuesta del modelo:\n{response_text}")
 
         if "Filtro:" in response_text:
             filtro = response_text.split("Filtro:")[1].split("Resumen:")[0].strip()
             resumen = response_text.split("Resumen:")[1].strip()
 
+            print(f"📎 Filtro generado: {filtro}")
+
+            # Aplicar el filtro al DataFrame
             resultados = df.query(filtro)
-            filas = resultados.head(10).to_dict(orient="records")
+
+            # Limpiar datos no serializables
+            filas = (
+                resultados.head(10)
+                .replace({float("inf"): None, float("-inf"): None})
+                .fillna("N/A")
+                .to_dict(orient="records")
+            )
 
             return {
                 "message": resumen,
@@ -70,10 +84,15 @@ async def chat(request: Request):
                 "filter": filtro
             }
 
-        return {"message": response_text}
+        # Si no hay filtro, devolver solo el texto del modelo
+        return {
+            "message": response_text,
+            "results": [],
+            "filter": None
+        }
 
     except Exception as e:
-        print("❌ Error:", str(e))
+        print("❌ Error en el backend:", str(e))
         return {
             "error": f"Ocurrió un error al procesar la solicitud: {str(e)}"
         }
