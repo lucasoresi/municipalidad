@@ -2,13 +2,13 @@ import os
 import pandas as pd
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-import openai
+from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Configuración OpenAI
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Cliente OpenAI (nuevo SDK)
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Carga de CSVs
 csv_folder = os.path.join(os.path.dirname(__file__), "csvs")
@@ -29,7 +29,7 @@ app.add_middleware(
 
 # Prompt del sistema
 system_prompt_csv = """
-Sos un asistente que responde preguntas sobre los gastos del municipio de Bahía Blanca (2008–2025).
+Sos un asistente que responde preguntas sobre los gastos del municipio de Bahía Blanca (2008–2023).
 Tenés acceso a una tabla con las siguientes columnas: año, orden de compra, fecha, importe, proveedor, dependencia y expediente.
 
 Si el usuario hace una pregunta concreta, respondé en este formato:
@@ -45,26 +45,23 @@ async def chat(request: Request):
     body = await request.json()
     user_message = body.get("message")
 
-    completion = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": system_prompt_csv},
-            {"role": "user", "content": user_message}
-        ],
-        temperature=0,
-    )
+    try:
+        completion = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": system_prompt_csv},
+                {"role": "user", "content": user_message}
+            ],
+            temperature=0,
+        )
+        response_text = completion.choices[0].message.content.strip()
+        print("🧠 Respuesta del modelo:", response_text)
 
-    response_text = completion.choices[0].message["content"].strip()
-    print("🧠 Respuesta del modelo:", response_text)
-
-    if "Filtro:" in response_text:
-        try:
+        if "Filtro:" in response_text:
             filtro = response_text.split("Filtro:")[1].split("Resumen:")[0].strip()
             resumen = response_text.split("Resumen:")[1].strip()
 
-            # Aplica el filtro sobre el dataframe
             resultados = df.query(filtro)
-
             filas = resultados.head(10).to_dict(orient="records")
 
             return {
@@ -73,12 +70,10 @@ async def chat(request: Request):
                 "filter": filtro
             }
 
-        except Exception as e:
-            return {
-                "error": f"Error al aplicar el filtro: {str(e)}",
-                "raw_response": response_text
-            }
+        return {"message": response_text}
 
-    return {
-        "message": response_text
-    }
+    except Exception as e:
+        print("❌ Error:", str(e))
+        return {
+            "error": f"Ocurrió un error al procesar la solicitud: {str(e)}"
+        }
